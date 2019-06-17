@@ -1,0 +1,469 @@
+---
+title: "Own project - indian liver"
+author: "Florian Kern"
+date: "14 June 2019"
+output: pdf_document
+github repo: https://github.com/kernf/own_project_indian_liver
+comment: Rmd file for the capstone own project - indian liver.
+---
+
+# Table of contents
+1. Summary
+2. Introduction
+3. Methods
+4. Results
+5. Conclusions
+
+# 1. Summary
+Reliable diagnosis are essential in medical care. Machine learning provides a great tool to assess the readily available patient data to predict disease state. The indian liver dataset was used to demonstrate this ability. The dataset consists of 416 patients with liver disease and 167 patients with no liver disease and 11 reported variables for each patient. The data set was split into a training and a testing set. After running a few different models an ensembler approach was chosen to use 23 different models to predict disease status and define a cumulated score across all models. The ensembler prediction yieled a an accuracy of 72.17%, which is great improvement over just guessing and could very well support a diagnosis decision.
+
+# 2. Introduction
+Predicting disease outcome based on several measurable variables is one of the best use cases for predicitve statistics and machine learning. There is already a lot of data available that includes numerous observations linked to a disease status e.g. diagnosis. In many cases there are disease postive and negative cases reported.
+
+Observations can range from sequencing results, protein levels, protein activity to general features like Age and Gender. Putting all this together is one of the main efforts undertaken in medical science.
+
+In this project a publicly available data set containing records of liver disease patients and liver-disease free patients is used. It contains 583 observations with 11 variables. 416 records of liver disease patients and 167 records of liver-disease free patients. The 11 observations include Age, Gender as well as a panel of measured protein activities and protein amounts. For further details refer to the Data Set Information part in 3. Methods.
+
+The task was to find a reliable algorithm to predict disease state in respect to the provided variables.
+
+# 3. Methods
+Load libraries:
+```{r load libraries, message=FALSE, warning=FALSE}
+library(dplyr) # a grammar for data manipulation
+library(ggplot2) # grammar of graphics
+library(caret) # classification and regression training package
+library(reshape2) # data reshaping
+```
+
+Download data from:
+https://archive.ics.uci.edu/ml/datasets/ILPD+(Indian+Liver+Patient+Dataset)
+
+Data Set Information:
+
+This data set contains 416 liver patient records and 167 non liver patient records.The data set was collected from north east of Andhra Pradesh, India. Selector is a class label used to divide into groups(liver patient or not). This data set contains 441 male patient records and 142 female patient records.
+
+Any patient whose age exceeded 89 is listed as being of age "90".
+
+Attribute Information:
+
+1. Age Age of the patient
+2. Gender Gender of the patient
+3. TB Total Bilirubin
+4. DB Direct Bilirubin
+5. Alkphos Alkaline Phosphotase
+6. Sgpt Alamine Aminotransferase
+7. Sgot Aspartate Aminotransferase
+8. TP Total Protiens
+9. ALB Albumin
+10. A/G Ratio Albumin and Globulin Ratio
+11. Selector field used to split the data into two sets (labeled by the experts)
+
+Load and read the data from csv file:
+```{r load data set}
+# read csv file
+liver_data <- read.csv("indian_liver_patient.csv", sep = ",", header = TRUE)
+```
+
+Let's explore the dataset:
+```{r structure of data set}
+# data set structure
+str(liver_data)
+```
+It contains 583 observations with 11 variables.
+
+```{r summary data set}
+# data set summary
+summary(liver_data)
+```
+
+Feature names available.
+```{r variables in data set}
+# vars in dataset
+colnames(liver_data)
+```
+The columnnames are Age, Gender, Total_Bilirubin, Direct_Bilirubn, Alkaline_Phosphatase, ...
+
+```{r disease non-disease cases}
+# disease distribution
+table(liver_data$Dataset)
+```
+The Dataset column contains the disease outcome variable. 1 means liver disease and 2 means no liver disease. There are 416 patients with disease and 167 patients without.
+
+```{r gender distribution}
+# gender distribution
+table(liver_data$Gender)
+```
+The dataset contains 142 Female and 441 Male patients.
+
+Let's convert "Gender" to a factor:
+```{r gender to factor conversion}
+# factorize gender
+liver_data$Gender <- as.factor(liver_data$Gender)
+class(liver_data$Gender)
+```
+
+Let's look at the age distribution:
+```{r age distribution}
+# plot age histogram
+histogram(liver_data$Age, main = "Age histogram", xlab = "Age", ylab = "%", col = "white")
+```
+
+The majority of cases are between 30 and 60 years of age.
+
+Let's change the columnname from Dataset to Liver Disease and change the values to 0 and 1 instead of 1 and 2. 0 for no disease and 1 for disease.
+```{r change name of disease column}
+# change column name
+colnames(liver_data)[colnames(liver_data) == "Dataset"] = "Liver_Disease"
+colnames(liver_data)
+```
+
+```{r convert disease outcome to 0 and 1}
+# change disease status to 0 an 1
+liver_data$Liver_Disease[liver_data$Liver_Disease == 2] = 0
+table(liver_data$Liver_Disease)
+```
+
+Convert Liver_Disease to a factor:
+```{r convert disease status to factor}
+# factorize disease status
+liver_data$Liver_Disease = as.factor(liver_data$Liver_Disease)
+str(liver_data)
+```
+
+Let's look at age and gender in the context of disease status
+```{r age and gender in the context of disease status}
+liver_data %>% ggplot(aes(Age, color= Liver_Disease)) +
+  geom_freqpoly(bins=15)
+liver_data %>% ggplot(aes(Age, color= Gender)) +
+  geom_freqpoly(bins=15)
+```
+Both look more or less equally distributed.
+
+
+Let's check for NAs in each column:
+```{r check for NAs}
+# check for NAs
+sapply(liver_data, function(x) sum(is.na(x)))
+```
+There are 4 NAs in the Albumin_and_Globulin_Ratio column.
+```{r percentage NAs}
+# calculate the percentage of NAs
+sum(is.na(liver_data)/nrow(liver_data))
+```
+4 rows account for less than 0.69% of the data.  Let's remove them.
+```{r remove NA entries}
+# remove NA entries
+liver_data = na.omit(liver_data)
+dim(liver_data)
+```
+
+Let's look at correlations:
+```{r correlations}
+# calculate the correlations of variables without Gender and Disease Status
+correlations <- cor(liver_data[,c(-2,-11)])
+correlations
+```
+
+```{r correlations triangle heatmap}
+# plot the correlation triangle as heatmap
+# function to get lower triangle of the correlation matrix
+get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+# function to get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+  
+# function to reorder data
+reorder_cormat <- function(cormat){
+# Use correlation between variables as distance
+dd <- as.dist((1-cormat)/2)
+hc <- hclust(dd)
+cormat <-cormat[hc$order, hc$order]
+}
+
+# reorder the correlation matrix
+cormat <- round(reorder_cormat(correlations),2)
+# get the upper triangle
+upper_tri <- get_upper_tri(cormat)
+# melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0,
+                       limit = c(-1,1), space = "Lab", name="Pearson\nCorrelation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 8, hjust = 1)) +
+  coord_fixed()
+
+# add correlation coefficient labels onto the heatmap
+ggheatmap + 
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = c(0.5, 0.7),
+    legend.direction = "horizontal") +
+  guides(fill = guide_colorbar(barwidth = 5, barheight = 1, title.position = "top", title.hjust = 0.5))
+```
+
+Let's find columns that have high pairwise correlation and remove them.
+```{r high pairwise correlation}
+# find highly correlated variables
+high_coor_cols <- findCorrelation(correlations, cutoff = 0.7, names = TRUE)
+high_coor_cols
+
+# remove highly correlated (redundant) data
+liver_data <- liver_data[, !names(liver_data) %in% high_coor_cols]
+dim(liver_data)
+```
+
+Let's split the data to obtain a training and a testing set:
+```{r split data set}
+# set a seed
+set.seed(1)
+# split data set into train and test
+index <- createDataPartition(liver_data$Liver_Disease, p = 0.8, list = FALSE)
+train = liver_data[index,]
+test = liver_data[-index,]
+dim(train)
+dim(test)
+```
+The training set contains 80% of the data.
+
+Many models do not support non-numerical values, therefore we convert the Gender column to numbers.
+```{r convert gender to numeric}
+# remove gender factor
+train$Gender <- as.numeric(train$Gender)
+test$Gender <- as.numeric(test$Gender)
+```
+
+# 4. Results
+# 4.1 Naive Bayes
+```{r naive bayes training, warning=FALSE}
+# set seed
+set.seed(1)
+# fit/train the model
+model1_nb_fit <- train(Liver_Disease ~ ., data = train, method = "nb")
+model1_nb_fit
+```
+
+```{r naive bayes var importance}
+# var importance
+model1_nb_imp <- varImp(model1_nb_fit, scale = FALSE)
+model1_nb_imp
+```
+
+```{r naive bayes plot var importance}
+# plot var importance
+plot(model1_nb_imp)
+```
+
+The important variables in this model are Alamine_Aminotransferase, Total_Bilirubin, and Alkaline_Phosphotase.
+
+Let's predict the test data and look at the confusion matrix and accuracy.
+```{r naive bayes prediction, warning=FALSE}
+# predict outcomes on test
+model1_nb_pred <- predict(model1_nb_fit, test)
+# confusion matrix
+model1_cm <- confusionMatrix(model1_nb_pred, test$Liver_Disease)
+model1_cm
+# model accuracy
+model1_acc <- model1_cm$overall["Accuracy"]
+model1_acc
+```
+The accuracy of the naive bayes model is about 70.43%. which seems alright.
+
+# 4.2 Logistic Regression - GLM
+```{r glm training, warning=FALSE}
+# set seed
+set.seed(2)
+# fit/train the model
+model2_glm_fit <- train(Liver_Disease ~., data = train, method = "glm", family = "binomial")
+model2_glm_fit
+```
+
+Importance
+```{r glm var importance}
+# var importance
+model2_glm_imp <- varImp(model2_glm_fit, scale = FALSE)
+```
+
+```{r glm plot var importance}
+# plot var importance
+plot(model2_glm_imp)
+```
+
+The important variables in this model are Alamine_Aminotransferase, Total_Bilirubin, and Age.
+
+Let's predict the test data and look at the confusion matrix and accuracy.
+```{r glm prediction}
+# predict outcomes on test
+model2_glm_pred <- predict(model2_glm_fit, test)
+# confusion matrix
+model2_cm <- confusionMatrix(model2_glm_pred, test$Liver_Disease)
+model2_cm
+# model accuracy
+model2_acc <- model2_cm$overall["Accuracy"]
+model2_acc
+```
+The accuracy of the glm model is 71.31%.
+
+# 4.3 knn
+```{r knn training}
+# set seed
+set.seed(2)
+# # fit/train the model
+model3_knn_fit <- train(Liver_Disease ~ ., data = train, method = "knn")
+model3_knn_fit
+```
+
+```{r knn var importance}
+# var importance
+model3_knn_imp <- varImp(model3_knn_fit, scale = FALSE)
+model3_knn_imp
+```
+
+```{r knn plot var importance}
+# plot var importance
+plot(model3_knn_imp)
+```
+
+The important variables are Alamine_Aminotransferase, Total_Bilirubin, and Alkaline_Phosphotase.
+
+Let's predict the test data and look at the confusion matrix and accuracy.
+```{r knn prediction}
+# predict outcomes on test
+model3_knn_pred <- predict(model3_knn_fit, test)
+# confusion matrix
+model3_cm <- confusionMatrix(model3_knn_pred, test$Liver_Disease)
+model3_cm
+# model accuracy
+model3_acc <- model3_cm$overall["Accuracy"]
+model3_acc
+```
+The accuracy of the knn model is 70.34%
+
+# 4.4 Random Forest
+```{r rf training}
+# set seed
+set.seed(3)
+# # fit/train the model
+model4_rf = train(Liver_Disease ~ ., method = "rf", data = train, prox = TRUE)
+model4_rf
+```
+
+```{r rf plot trained model}
+# plot trained models mtrys
+plot(model4_rf)
+```
+
+```{r rf var importance}
+# var importance
+model4_rf_imp <- varImp(model4_rf, scale = FALSE)
+model4_rf_imp
+```
+
+```{r rf plot var importance}
+# plot var importance
+plot(model4_rf_imp)
+```
+
+The important variables are Alamine_Aminotransferase, Alkaline_Phosphotase, and Age.
+
+Let's predict the test data and look at the confusion matrix and accuracy.
+```{r rf prediction}
+# predict outcomes on test
+model4_pred <- predict(model4_rf, test)
+# confusion matrix
+model4_cm <- confusionMatrix(model4_pred, test$Liver_Disease)
+model4_cm
+# model accuracy
+model4_acc <- model4_cm$overall["Accuracy"]
+model4_acc
+```
+The random forest model yields a 73,04% accuracy.
+
+# Overview accuracy
+```{r accuracy overview}
+# create table with accuracies overview
+tibble(method = c("naive bayes", "glm", "knn", "random forest"),
+       Accuracy = c(model1_acc, model2_acc, model3_acc, model4_acc))
+```
+Naive Bayes and knn models give the lowest accuracy with 70.04%. The random forest model yielded the highes accuracy with 73.04% accuracy.
+
+Testing each model is getting tidious pretty quickly. Let's use an ensembler with different models. 
+
+# 4.5 Ensembler
+Several models are available in the caret package. We will use 22 models and see how the ensembler as well as the individual models perform.
+```{r ensembler models}
+# list of models
+models <- c("glm", "lda",  "naive_bayes",  "svmLinear", "gamLoess",
+            "qda", "knn", "kknn", "loclda", "gam", "rf", "ranger", 
+            "wsrf", "Rborist", "avNNet", "mlp", "monmlp", "adaboost",
+            "gbm", "svmRadial", "svmRadialCost", "svmRadialSigma")
+```
+
+```{r just for knitting, include=FALSE}
+# loading trained data to curcumvent error in knitting the pdf
+load("~/Schreibtisch/R/projects/Data_Science/capstone_ownproject/github/own_project_indian_liver/fitted_data.RData")
+```
+
+Let's train each model on our training data:
+```{r ensembler training, eval=FALSE, include=TRUE}
+# set seed
+set.seed(1)
+# fit/train models
+fits <- lapply(models, function(model){ 
+  print(model)
+  train(Liver_Disease ~ ., method = model, data = train)
+}) 
+```
+
+Use the trained models to predict the testing data:
+```{r ensembler predictions, eval=FALSE, include=TRUE}
+# predict with each model
+fits_predicts <- sapply(fits, function(fits){
+  predict(fits, test) 
+})
+```
+
+Summarize the accuracies for each model on the test set.
+```{r ensembler predictions accuracies}
+# calculate accuracies for each model
+acc <- colMeans(fits_predicts == test$Liver_Disease)
+acc
+```
+The accuracy ranges from very low 47.83% to 73.04%. Below 50% is worse than guessing.
+
+Let's use the individual predictions of the ensembler to calculate an accumulated prediction:
+```{r ensembler accumulated predictions accuracy}
+# obtain mean score of predictions
+votes <- rowMeans(fits_predicts == 1)
+# accumulated voting, below mean of 0.5 vote is 0
+y_hat <- ifelse(votes > 0.5, 1, 0)
+# ensembler accuracy mean is mean of accumulated votes accuracy
+ensembler_mean <- mean(y_hat == test$Liver_Disease)
+ensembler_mean
+```
+The ensembler yields an average accuracy of 72.17%. 
+
+For a quick sanity check, which models perform individually better than the mean of the ensembler:
+```{r ensembler outperformers}
+# which individual models are better than the ensembler mean
+better <- ensembler_mean < acc
+acc[which(better==T)]
+```
+Only the loclda and the ranger model with an accuracy of 73.04% have a higher accuracy in predicting liver disease than the accumulated ensembler prediction with an accuracy of 72.17%.
+
+# 5. Conclusions
+Overall the accuracy of 72.17% using the ensembler approach is a lot higher than just guessing but certainly not enough for a deployment. The localda and ranger model yielded the highest accuracy of 73.04%. A much larger dataset would be needed to test the reliability of the ensembler. Anyway it is a proof of concept that an ensembler consisting of numerous models is the way to go forward and with further optimization e.g tweaking the model parameters or data transformation would be needed to make this a reliable tool for a real world application. In any case it could already be used to support a diagnosis decision. 
